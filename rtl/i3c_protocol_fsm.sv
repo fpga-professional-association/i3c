@@ -301,7 +301,11 @@ module i3c_protocol_fsm (
   end
 
   assign tx_byte_out    = read_from_ccc_q ? ccc_resp_byte : tx_byte;
-  assign tx_drive_en    = (state == S_READ) && !read_done_q;
+  // Drive read DATA bits only; RELEASE during the 9th (T-bit) slot so the framer owns
+  // the read T-bit (i3c_framer.tbit_oe). Without the !ninth_slot gate the bit engine's
+  // push-pull fill and the framer's T-bit would both drive SDA in the 9th slot -- a
+  // single-owner violation, and on the final byte the fill '1' fights the framer's T=0.
+  assign tx_drive_en    = (state == S_READ) && !read_done_q && !ninth_slot;
   assign more_read_data = (state == S_READ) &&
                           (read_from_ccc_q ? (ccc_resp_valid && !ccc_resp_last)
                                            : (!tx_empty && !tx_last));

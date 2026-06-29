@@ -2,7 +2,7 @@
 
 This note records the integration defects that the **Icarus simulation** exposed in
 the assembled `i3c_target_top` but that the **per-module SymbiYosys proofs** could not
-see. Seven are fixed and re-verified; one (`FINDING-SIM-7`) is understood and tracked.
+see. All eight are fixed and re-verified.
 
 ## Why formal missed them
 
@@ -37,7 +37,7 @@ the proofs:
 Simulation runs the **real oversampled timing** (the BFM holds each half-bit `PH=8`
 `sys_clk` cycles so the 2-FF synchronizers settle, on a `tri1` open-drain bus with a
 pull-up), which is precisely where these surface. After the fixes the bus stack runs
-end-to-end (**21/21 sim PASS** — broadcast ACK, full ENTDAA DA=0x08, private write,
+end-to-end (**29/29 sim PASS** — broadcast ACK, full ENTDAA DA=0x08, private write,
 private read, GETSTATUS ACK + response start), the **full formal suite is still ALL
 GREEN** (13 module configs + integration = 14 configs, 41 proof tasks, ~280 assertions), and the
 **Altera Quartus Prime Pro 25.3** build is clean; internal (reg-to-reg + input) timing meets 125 MHz (+2.15 ns, Fmax ~244 MHz) — the combinational Avalon output-pin paths are pad-buffer-limited in standalone pin synthesis (on-chip IP boundary; see syn/altera/README). 528 ALMs / 348 regs / 2 RAM blocks.
@@ -53,7 +53,7 @@ GREEN** (13 module configs + integration = 14 configs, 41 proof tasks, ~280 asse
 | 5 | FINDING-SIM-4: read MSb phase error | Private-read first byte shifted 1 bit | `i3c_bit_engine` · `tx_first` | **Fixed** |
 | 6 | FINDING-SIM-5: read never terminates | Controller cannot form a STOP after a read | `i3c_protocol_fsm` · `read_done_q` | **Fixed** |
 | 7 | FINDING-SIM-6: directed GET wrongly NACKed | Every `GETSTATUS`/`GETPID`/… NACKs | `i3c_protocol_fsm` · `is_read` = live `rnw` at `S_ADDR && byte_done` | **Fixed** |
-| 8 | FINDING-SIM-7: multi-byte GET stops at byte 0 | Only the first GET response byte is driven | `i3c_ccc` · `resp_idx` advance timing | **Open (tracked)** |
+| 8 | FINDING-SIM-7: multi-byte GET stops at byte 0 | Only the first GET response byte was driven; 2nd+ shifted | `i3c_ccc` resp_idx/look-ahead + `i3c_protocol_fsm` reload at ninth_fell | **Fixed** |
 
 ---
 
@@ -258,43 +258,40 @@ address-byte boundary, falling back to the latched value otherwise:
 downstream consumers are unchanged; only the ACK-decision cycle is corrected.
 
 **Re-verified.** `i3c_ccc` `ccc_ack` / K6 / K7 and `i3c_protocol_fsm` ACK proofs
-re-run green; sim now ACKs and starts the GET response (single-byte GETs complete; see
-FINDING-SIM-7 for the multi-byte case); Quartus build still clean (internal timing unaffected).
+re-run green; sim now ACKs and starts the GET response (single-byte GETs complete; multi-byte
+GETs fixed in FINDING-SIM-7); Quartus build still clean (internal timing unaffected).
 
 ---
 
-## FINDING-SIM-7 — multi-byte GET response drives only the first byte (OPEN, tracked)
+## FINDING-SIM-7 — multi-byte GET response drove only the first byte (FIXED)
 
 **Symptom.** A multi-byte directed GET (`GETSTATUS` = 2 bytes, also `GETPID`/`GETCAPS`/
-`GETMRL`) ACKs and drives **byte 0**, then ends the response early; the Controller never
-receives byte 1+. Single-byte GETs (`GETBCR`/`GETDCR`) and the ACK + response *start*
-work.
+`GETMRL`) ACKed and drove **byte 0** correctly, but the 2nd+ bytes came out **shifted
+left by one bit** (and the response ended one byte early). Single-byte GETs
+(`GETBCR`/`GETDCR`) and the ACK + response *start* always worked.
 
-**Root cause.** In `i3c_ccc`, the response byte index `resp_idx` increments on
-`data_done` (`= byte_done && phase==PH_DATA`), i.e. when the **8th data bit** of a byte
-is sampled — one slot *before* that byte's T-bit completes:
-`if (in_read_seg) resp_idx <= (resp_idx==3'd7) ? resp_idx : resp_idx + 3'd1;`.
-The response byte and its last-flag are combinational on `resp_idx`
-(e.g. GETSTATUS: `ccc_resp_last = (resp_idx >= 3'd1)`). So by the time
-`i3c_protocol_fsm` evaluates the **byte-0 T-bit** (`ninth_fell`), `resp_idx` has already
-advanced to 1, `ccc_resp_last` is asserted, `more_read_data` is false, and `read_done_q`
-(FINDING-SIM-5) releases the drive after byte 0 — the response terminates one byte too
-early. Single-byte GETs are immune because their `ccc_resp_last` is hardwired `1'b1`
-independent of `resp_idx` (e.g. `CCC_GETBCR_D: ccc_resp_byte = bcr; ccc_resp_last = 1`).
+**Root cause (two coupled issues).** `i3c_protocol_fsm` reloaded the next response byte
+at `byte_done` — the **8th-data-bit rising**, i.e. *mid-byte*, one slot before that byte's
+T-bit slot. The bit engine's `tx_first` MSb-hold (FINDING-SIM-4) is tuned for a load that
+happens at the byte boundary (the first byte loads at `S_ACK -> S_READ`, i.e. at the
+address ACK's `ninth_fell`); loading the reload one slot early let the previous byte's
+T-bit slot consume the reloaded byte's MSb, so every 2nd+ byte came out shifted left by
+one bit. Compounding it, the response value index `resp_idx` advanced on `data_done`
+(8th bit) so the `ccc_resp_last` look-ahead was also off by one and the read terminated a
+byte early. Single-byte GETs were immune (`ccc_resp_last` hardwired `1`, only the first
+byte, loaded at the correct phase).
 
-**Status / planned fix.** Open and tracked. The response index advance is coupled to the
-8th-data-bit `byte_done` rather than to the T-bit boundary at which the byte is actually
-consumed, so the `ccc_resp_last` look-ahead is off by one for any response longer than a
-byte. The fix is a **decoupled response pipeline**: advance the response pointer on the
-T-bit (read-data-consumed) boundary, or buffer the response bytes so `ccc_resp_last`
-reflects the byte currently on the wire rather than the next index. This requires
-coordinated changes in `i3c_ccc` (`resp_idx` advance event) and the read-data handshake
-in `i3c_protocol_fsm` (`more_read_data` / `read_done_q`). Per-module GETCAPS-length
-covers (`c12_*`) still hold over the free `resp_idx`, which is why formal stayed green.
+**Fix.** Reload at the **same bit-phase as the first byte**: `i3c_protocol_fsm` now issues
+the read reload on `ninth_fell` (after the byte's T-bit slot) instead of `byte_done`. In
+`i3c_ccc`, `resp_idx` advances on the **data-phase** `ninth_fell` (a response T-bit, gated
+to `PH_DATA` so the address-ACK ninth slot doesn't count), and a 1-ahead select
+(`resp_sel = resp_idx + 1` at that load boundary) presents the next byte for capture while
+`ccc_resp_last` stays on `resp_idx` for termination. GETCAPS length asserts (`c12_*`) are
+gated off the 1-cycle load transition.
 
-**Impact.** Bounded and known: single-byte GETs, the directed-GET ACK, and the response
-*start* are correct (21/21 sim PASS includes GETSTATUS ACK + response). Only the 2nd+
-response byte of a multi-byte GET is affected.
+**Re-verified.** `i3c_ccc` and `i3c_protocol_fsm` formal prove/bmc/cover GREEN; full suite
+ALL GREEN; sim **29/29** including a new GETPID read that checks all six PID bytes
+(`05 4A 12 34 56 78`) and the GETSTATUS low byte.
 
 ---
 
@@ -322,5 +319,5 @@ Each method caught what the others structurally cannot. Formal alone would have 
 seven integration bugs that every unit proof certified as correct; simulation alone would
 have left the safety invariants merely *sampled* rather than *proven*; synthesis confirms
 none of the fixes cost closure. Run together, they **found and fixed real bugs** — and
-the one remaining issue (FINDING-SIM-7) is fully characterized down to the exact signal
+all eight findings are fixed and re-verified (FINDING-SIM-7 characterized down to the exact signal
 and slot, ready for a scoped fix.

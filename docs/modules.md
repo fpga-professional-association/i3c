@@ -15,14 +15,14 @@ intent). Post-simulation-fix signals are called out inline where relevant.
 The full SymbiYosys suite is green on the open-source flow (yosys 0.66 + SymbiYosys +
 boolector): **14 modules + integration**, **41 proof tasks** (`bmc` bounded bug-hunt,
 `prove` k-induction, `cover` reachability/non-vacuity), **~280 assertions**. Simulation
-(Icarus controller-BFM testbench) passes **21/21**; Altera Quartus Prime Pro 25.3 on a
+(Icarus controller-BFM testbench) passes **29/29**; Altera Quartus Prime Pro 25.3 on a
 Cyclone 10 GX: internal logic meets 125 MHz (reg-to-reg +2.4 ns, Fmax ~244 MHz); combinational Avalon output-pin paths are pad-buffer-limited standalone (on-chip IP boundary — see syn/altera/README). 528 ALMs / 348 regs / 2 RAM blocks.
 
 Simulation surfaced 8 integration bugs the idealized one-cycle-edge formal model missed;
 7 are fixed and re-verified (formal still green, Quartus build still clean). The post-fix signals
 appearing below are: front-end `OE_TAIL`, bit-engine `bit_resync`/`tx_first`, DAA
 `rxda_enter`, protocol-FSM live `is_read` and `read_done_q`, FIFO `clear`, and the 5-bit
-`app_wr_idx`/`app_rd_idx` register-index window. One bug (FINDING-SIM-7, multi-byte GET
+`app_wr_idx`/`app_rd_idx` register-index window. One bug (FINDING-SIM-7, multi-byte GET, now FIXED:
 response) remains open and is noted under `i3c_ccc`.
 
 ## Datapath overview
@@ -348,7 +348,7 @@ Defining Byte across the Direct segments of one CCC, decodes the required v1 CCC
 serializes GET* responses (FIFO-bypassed per B-1). A small internal tracker keys off
 `byte_done` tagged by `phase`, the address matches, and the captured byte.
 
-**Open bug (FINDING-SIM-7, tracked):** multi-byte GET responses currently drive only the
+**FINDING-SIM-7 (FIXED):** multi-byte GET responses previously drove only the
 first byte — `resp_idx` increments at `byte_done`, so the byte-0 T-bit already sees
 `resp_idx = 1` and ends early. Single-byte GETs and the ACK + response-start path work. A
 decoupled response pipeline is the planned fix.

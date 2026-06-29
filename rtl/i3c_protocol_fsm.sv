@@ -305,8 +305,12 @@ module i3c_protocol_fsm (
   assign more_read_data = (state == S_READ) &&
                           (read_from_ccc_q ? (ccc_resp_valid && !ccc_resp_last)
                                            : (!tx_empty && !tx_last));
+  // Reload the next read byte at ninth_fell (after the current byte's T-bit slot),
+  // the SAME bit-phase as the first byte's load at S_ACK->S_READ. Loading at byte_done
+  // (the 8th-bit rising, mid-byte) was one slot too early and dropped the reloaded
+  // byte's MSb -> 2nd+ bytes shifted (FINDING-SIM-7).
   assign tx_load        = ((state == S_ACK) && (next_state == S_READ)) ||
-                          ((state == S_READ) && byte_done && more_read_data);
+                          ((state == S_READ) && ninth_fell && more_read_data);
   assign tx_pop         = (state == S_READ) && !read_from_ccc_q && byte_done && !tx_empty;
 
   // --------------------------------------------------------------------------

@@ -450,7 +450,7 @@ sequenceDiagram
   T->>B: getstatus_word 7..0 push-pull + T-bit = 0 last
   C->>B: STOP or Sr
   Note over T,A: getstatus_rd pulse, regfile clears sticky proto_err read-to-clear
-  Note over T: FINDING-SIM-7 OPEN multi-byte GET drives only byte 0 today, ACK + first-byte response are verified, 2nd+ byte needs a decoupled response pipeline
+  Note over T: FINDING-SIM-7 FIXED multi-byte GET reloads each byte at ninth_fell; GETPID returns all six PID bytes
 ```
 
 ### 4.5 In-Band Interrupt (IBI) with arbitration + MDB

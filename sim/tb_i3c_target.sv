@@ -208,6 +208,11 @@ module tb_i3c_target;
     if (rd[7]) run_getstatus(rd[6:0]);
     else $display("  [SKIP] no DA; GETSTATUS skipped");
 
+    $display("\n=== F. GETPID CCC (multi-byte response, FINDING-SIM-7) ===");
+    avl_rd(R_DYN, rd);
+    if (rd[7]) run_getpid(rd[6:0]);
+    else $display("  [SKIP] no DA; GETPID skipped");
+
     $display("\n========================================");
     $display(" RESULT: %0d passed, %0d failed", pass, fail);
     $display("========================================");
@@ -271,9 +276,30 @@ module tb_i3c_target;
     send_byte_ack({da,1'b1}, a); check(a, "GETSTATUS: DA+R ACK");
     read_byte_tbit(b0, t); read_byte_tbit(b1, t);
     // GETSTATUS Format-1 high byte for an idle Target (no pending IRQ / errors) = 0x00.
-    // (Low-byte continuation is FINDING-SIM-7: multi-byte GET 2nd+ byte not yet driven;
-    //  lo reads released here. Tracked as a refinement.)
+    // Multi-byte streaming (the low byte and beyond) is verified decisively by the
+    // GETPID test below (FINDING-SIM-7 fixed).
     check(b0==8'h00, $sformatf("GETSTATUS responds, status high byte=0x00 (got hi=0x%02x lo=0x%02x)", b0, b1));
+    bus_stop; clkw(20);
+  endtask
+
+  // ----- GETPID (Direct CCC 0x8D): 7E+W, 0x8D+T, Sr, DA+R, read 6 PID bytes -----
+  // Decisive multi-byte GET test (FINDING-SIM-7). PID = {MFG_ID, type, PID_VAL}, so the
+  // six response bytes are pid[47:40], [39:32], ... [7:0] (here 05,4A,12,34,56,78 - all
+  // distinct after byte0). Before the fix the response repeated/lagged bytes by one.
+  task automatic run_getpid(input [6:0] da);
+    logic a; logic [7:0] bb; logic t; int i;
+    logic [47:0] pidv; logic [7:0] expb;
+    pidv = {TB_MFG, 1'b0, TB_PIDV};
+    bus_start;
+    send_byte_ack({7'h7E,1'b0}, a); check(a, "GETPID: 7E+W ACK");
+    send_byte_tbit(8'h8D);                              // GETPID code + T
+    bus_rstart;
+    send_byte_ack({da,1'b1}, a); check(a, "GETPID: DA+R ACK");
+    for (i=0;i<6;i++) begin
+      read_byte_tbit(bb, t);
+      expb = pidv[47 - 8*i -: 8];
+      check(bb==expb, $sformatf("GETPID byte%0d=0x%02x exp 0x%02x", i, bb, expb));
+    end
     bus_stop; clkw(20);
   endtask
 

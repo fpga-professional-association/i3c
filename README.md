@@ -278,5 +278,4 @@ Full index: [`docs/README.md`](docs/README.md). Highlights:
 
 ---
 
-*Spec reference: MIPI I3C Basic Specification v1.2 (public edition), included as
-`MIPI-I3C-Basic-Specification-v1-2-public-edition-er01.pdf`.*
+*Spec reference: MIPI I3C Basic Specification v1.2 (public edition) — obtain from MIPI (https://www.mipi.org). The PDF is NOT redistributed in this repository.*

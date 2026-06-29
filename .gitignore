@@ -50,3 +50,6 @@ formal/i3c_integration/
 # reports/ holds committed build EVIDENCE — keep its logs despite the *.log rule
 !reports/*.log
 !reports/quartus/*.log
+# MIPI I3C spec PDF — not redistributed (obtain from mipi.org); keep out of the repo
+MIPI-I3C-Basic-Specification-v1-2-public-edition-er01.pdf
+*.pdf

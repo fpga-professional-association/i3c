@@ -18,7 +18,7 @@ index, DAA `bit_resync`, FIFO `clear`, front-end release-tail `OE_TAIL`, bit-eng
 |---|---|---|
 | **Formal** | yosys 0.66 + SymbiYosys + boolector | **ALL GREEN** — 41 tasks (bmc + k-induction prove + cover), ~280 assertions |
 | **Simulation** | Icarus Verilog (`iverilog -g2012`), controller BFM + Avalon master | **21 / 21 PASS** (see `sim/README.md`) |
-| **Synthesis + STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G` | 0 errors; **internal (reg-to-reg + input) timing meets 125 MHz** (+2.4 ns, Fmax ~244 MHz). The combinational Avalon **output**-pin paths (avs_readdata/waitrequest/irq) are pad-buffer-limited in standalone pin synthesis (-2.86 ns) -- an on-chip-IP-boundary / OOC artifact, NOT an in-system path; see syn/altera/README.md. 528 ALMs / 348 regs / 2 RAM blocks |
+| **Synthesis + STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G` | 0 errors; **internal (reg-to-reg + input) timing meets 125 MHz** (+2.15 ns, Fmax ~244 MHz). The combinational Avalon **output**-pin paths (avs_readdata/waitrequest/irq) are pad-buffer-limited in standalone pin synthesis (-1.81 ns, now just avs_waitrequest after readdata was registered) -- an on-chip-IP-boundary / OOC artifact, NOT an in-system path; see syn/altera/README.md. 528 ALMs / 348 regs / 2 RAM blocks |
 
 The three checks are complementary: formal proves the per-module state machines
 exhaustively on idealized one-cycle edge strobes; simulation exercises real end-to-end

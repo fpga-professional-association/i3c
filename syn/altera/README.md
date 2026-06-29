@@ -28,30 +28,35 @@ constrained — see the SDC and the "I/O constraints" note below):
 
 | Path class | Worst-case setup slack @ 8.0 ns (125 MHz) | Verdict |
 |---|---|---|
-| **Register-to-register + input** (the actual logic) | **+2.4 ns** | **MET** — pure reg-to-reg Fmax ≈ 244 MHz |
+| **Register-to-register + input** (the actual logic) | **+2.15 ns** | **MET** — pure reg-to-reg Fmax ≈ 244 MHz |
 | Hold (all) | +0.02 ns | MET |
-| **Combinational Avalon *output* pins** (`avs_readdata`/`waitrequest`/`irq`) | **−2.86 ns** | does **not** close standalone |
+| **Combinational Avalon *output* pins** — now just `avs_waitrequest` | **−1.81 ns** | does **not** close standalone (irreducible, see below) |
 
-**The internal logic meets 125 MHz** (the meaningful result for an on-chip IP). The
-failing paths are *only* the Avalon **output** pins, which are **combinational**
-(`avs_readdata` is a RAM-read → mux; `avs_waitrequest` and `irq` are reductions) and go
-through the FPGA **output-pad buffer (~3.65 ns)** to a hypothetical external register.
+**The internal logic meets 125 MHz** (the meaningful result for an on-chip IP).
+
+`avs_readdata` is now **registered** (`i3c_avalon_mm`, issue #1 — 2-cycle Avalon read
+latency, gated by `readdatavalid`), which moved the launch flop next to the output pad and
+closed the old worst path (the RX-FIFO-read → readback-mux → pin path, previously −2.86 ns).
+The only remaining negative-slack output is **`avs_waitrequest`**, which **Avalon requires
+to be combinational** (the master needs it in the same cycle as the command) — so it
+*cannot* be registered. Its port → decode/compare → port path runs through the FPGA pad
+buffers (~3.65 ns each) and is ~8.7 ns, i.e. above the 8 ns period **regardless of the I/O
+delay budget**.
 
 This is an **out-of-context (OOC) artifact, not a design flaw**: an Avalon-MM agent is an
 **on-chip IP boundary**, not chip pins — in a real system (Platform Designer) these ports
-connect to the interconnect with **no output-pad buffer**, so the paths are RAM/mux →
-interconnect register (~2.6 ns) and close easily. Synthesizing the IP *standalone with the
-Avalon ports as chip pins* is what exposes the pad-buffer delay. Note also that Avalon
-**requires `waitrequest` to be combinational**, so it cannot be registered.
+connect to the interconnect with **no pad buffers**, so `avs_waitrequest` is just a shallow
+decode/compare (~1 ns) and closes easily. Synthesizing the IP *standalone with the Avalon
+ports as chip pins* is what exposes the pad-buffer delay.
 
 > **Earlier versions of these docs claimed "timing met @125 MHz" unqualified. That was
 > wrong** — it held only because the I/O ports were *unconstrained* (STA wasn't analyzing
 > them). With a complete SDC the truthful statement is the table above.
 
-**For a true chip-pin Avalon deployment** (rather than an on-chip IP), close the output
-paths by: (1) registering the registerable outputs (`avs_readdata` → 2-cycle Avalon read
-latency, gated by `readdatavalid`); (2) adding `set_location_assignment` pin placement and
-an I/O standard; (3) budgeting `set_output_delay` to the real downstream register.
+**For a true chip-pin Avalon deployment** (rather than an on-chip IP), close the residual
+`avs_waitrequest` path with (1) `set_location_assignment` pin placement + a fast I/O
+standard to cut the pad-buffer delay, and (2) `set_output_delay` budgeted to the real
+downstream register. (`avs_readdata` is already registered.)
 
 ### I/O constraints (`i3c_target.sdc`)
 Constrains every domain so STA is meaningful: `create_clock` on `clk`; async SDA/SCL pads

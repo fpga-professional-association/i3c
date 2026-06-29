@@ -14,7 +14,7 @@ The design is checked **three independent ways**:
 |---|---|---|
 | **Formal** | yosys 0.66 + SymbiYosys + boolector | **ALL GREEN** — 14 configs, 41 proof tasks (BMC + k-induction + cover), ~280 assertions |
 | **Simulation** | Icarus Verilog (controller BFM + Avalon master) | **21 / 21 PASS** — broadcast ACK, full ENTDAA, private write/read, GETSTATUS |
-| **Synthesis / STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX | **Timing met at 125 MHz**, Fmax ≈ 244 MHz, ~904 logic cells, 19 RAM blocks |
+| **Synthesis / STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX | **Internal logic meets 125 MHz** (reg-to-reg +2.4 ns, Fmax ≈ 244 MHz); combinational Avalon **output**-pin paths are pad-buffer-limited standalone (on-chip IP boundary — see [`syn/altera/README.md`](syn/altera/README.md)). 528 ALMs / 348 regs / 2 RAM blocks |
 
 ---
 
@@ -159,12 +159,12 @@ and toolchain paths.
 |---|---|---|
 | **Formal** (yosys 0.66 + SymbiYosys + boolector) | Per-module + integration safety/correctness invariants: contention-freedom (F-1), single-owner SDA `$onehot0` (F-2), self-drive gate (F-3), ACK/NACK correctness, T-bit/parity, address matching, ENTDAA, CCC decode, IBI gating, error recovery, Avalon-MM compliance | **ALL GREEN** — 14 configs (13 modules + integration), 41 tasks, ~280 assertions |
 | **Simulation** (Icarus, controller BFM + Avalon master) | Real end-to-end transactions on an oversampled open-drain bus: broadcast `0x7E` ACK, full ENTDAA (DA latches `0x08`), private write (`0x5C` → RX FIFO), private read (`0xC3`), GETSTATUS ACK + response | **21 / 21 PASS** |
-| **Synthesis / STA** (Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G`) | Real synthesizability, place & route, static timing | **Timing met at 125 MHz**, Fmax ≈ 244 MHz, ~904 logic cells, 19 RAM blocks |
+| **Synthesis / STA** (Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G`) | Real synthesizability, place & route, static timing | **Internal logic meets 125 MHz** (reg-to-reg +2.4 ns, Fmax ≈ 244 MHz); combinational Avalon **output**-pin paths are pad-buffer-limited standalone (on-chip IP boundary — see [`syn/altera/README.md`](syn/altera/README.md)). 528 ALMs / 348 regs / 2 RAM blocks |
 
 The per-module formal proofs use an **idealized one-cycle edge model** (one strobe = one
 settled bus edge). Simulation, with real oversampled timing, therefore found **8 integration
 bugs the formal proofs could not see** — **7 are fixed and re-verified** (formal still ALL
-GREEN, Quartus timing still met) and **1 is tracked**:
+GREEN, Quartus build still clean) and **1 is tracked**:
 
 1. **Fixed** — GETCAPS/RESET reads returned 0: a 4-bit `app_*_idx` aliased register indices
    16/17 to 0. Widened `app_wr_idx`/`app_rd_idx` to 5-bit across `i3c_regfile` /

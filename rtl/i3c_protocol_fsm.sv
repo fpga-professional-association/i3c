@@ -205,10 +205,10 @@ module i3c_protocol_fsm (
 
       // Latch the routed data state only for an ACKed frame (enters S_ACK).
       if (state == S_ADDR && byte_done && want_ack) begin
-        route_q <= (match_7e && !rnw)              ? S_CCC  : // broadcast CCC
-                   (match_da && ccc_seg && !rnw)   ? S_CCC  : // directed SET
-                   (match_da && rnw)               ? S_READ : // private read / GET
-                                                     S_WRITE; // private write
+        route_q <= state_e'((match_7e && !rnw)            ? S_CCC  : // broadcast CCC
+                            (match_da && ccc_seg && !rnw) ? S_CCC  : // directed SET
+                            (match_da && rnw)             ? S_READ : // private read / GET
+                                                            S_WRITE);// private write (explicit cast: strict iverilog)
         read_from_ccc_q <= (match_da && ccc_seg && rnw);      // GET response source
       end
     end

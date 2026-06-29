@@ -14,26 +14,52 @@ Files: `i3c_target.qsf` (project), `i3c_target.sdc` (timing). Default device is
 **Cyclone 10 GX `10CX220YF780E5G`** (also installed: Agilex 3 / Agilex 5 — change
 `FAMILY`/`DEVICE` in the QSF). Toolchain found at `C:\altera_pro\25.3`.
 
-## Results (Quartus Prime Pro 25.3, Cyclone 10 GX, final RTL 2026-06-28)
+## Results (Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G`, final RTL)
 | Stage | Result |
 |---|---|
-| Analysis & Synthesis | **0 errors** (4 benign warnings) |
+| Analysis & Synthesis | **0 errors** |
 | Fitter (place & route) | **0 errors** |
-| STA | **Timing requirements met** |
+| Resources | **528 ALMs, 348 registers, 2 RAM blocks, 84 pins** (post-fit; synthesis estimate ~900 logic cells) |
 
-- **Setup:** comfortable positive worst-case slack at the 8.000 ns (125 MHz) target →
-  **Fmax ≈ 244 MHz** on this device (comfortably above the ≥100 MHz floor, D-1).
-- **Hold:** worst-case slack **+0.020 ns** (met).
-- **Resources:** ~904 logic cells, 19 RAM segments, 1 bidirectional pin (SDA).
+### Timing — read this carefully
 
-(Re-confirmed after the post-sim RTL fixes: 5-bit register index, DAA `bit_resync`,
-FIFO `clear`, front-end release-tail `OE_TAIL`, bit-engine `tx_first`, FSM `read_done_q`,
-live-`rnw` CCC-ACK decode. Fmax decreased modestly vs the first build from the added
-logic — still well within margin.)
+The honest result, split by path class (this is what STA reports once the I/O is fully
+constrained — see the SDC and the "I/O constraints" note below):
 
-Benign warnings: `avs_readdata[31:24]` tied GND (those register-read bits are unused);
-some unused registers optimized away; "not fully constrained" for the deliberately
-cut async SDA/SCL paths (`set_false_path` in the SDC — closed by the synchronizers + sim).
+| Path class | Worst-case setup slack @ 8.0 ns (125 MHz) | Verdict |
+|---|---|---|
+| **Register-to-register + input** (the actual logic) | **+2.4 ns** | **MET** — pure reg-to-reg Fmax ≈ 244 MHz |
+| Hold (all) | +0.02 ns | MET |
+| **Combinational Avalon *output* pins** (`avs_readdata`/`waitrequest`/`irq`) | **−2.86 ns** | does **not** close standalone |
+
+**The internal logic meets 125 MHz** (the meaningful result for an on-chip IP). The
+failing paths are *only* the Avalon **output** pins, which are **combinational**
+(`avs_readdata` is a RAM-read → mux; `avs_waitrequest` and `irq` are reductions) and go
+through the FPGA **output-pad buffer (~3.65 ns)** to a hypothetical external register.
+
+This is an **out-of-context (OOC) artifact, not a design flaw**: an Avalon-MM agent is an
+**on-chip IP boundary**, not chip pins — in a real system (Platform Designer) these ports
+connect to the interconnect with **no output-pad buffer**, so the paths are RAM/mux →
+interconnect register (~2.6 ns) and close easily. Synthesizing the IP *standalone with the
+Avalon ports as chip pins* is what exposes the pad-buffer delay. Note also that Avalon
+**requires `waitrequest` to be combinational**, so it cannot be registered.
+
+> **Earlier versions of these docs claimed "timing met @125 MHz" unqualified. That was
+> wrong** — it held only because the I/O ports were *unconstrained* (STA wasn't analyzing
+> them). With a complete SDC the truthful statement is the table above.
+
+**For a true chip-pin Avalon deployment** (rather than an on-chip IP), close the output
+paths by: (1) registering the registerable outputs (`avs_readdata` → 2-cycle Avalon read
+latency, gated by `readdatavalid`); (2) adding `set_location_assignment` pin placement and
+an I/O standard; (3) budgeting `set_output_delay` to the real downstream register.
+
+### I/O constraints (`i3c_target.sdc`)
+Constrains every domain so STA is meaningful: `create_clock` on `clk`; async SDA/SCL pads
+and reset cut with `set_false_path` (metastability closed by the 2–3 FF synchronizers, not
+STA); Avalon-MM I/O given `set_input_delay`/`set_output_delay` (placeholder ~1 ns budgets —
+set to the real master for sign-off). This reduced unconstrained ports from **35 in / 28
+out to 1 in / 1 out** (the remaining two are the tied-off `avl_clk` pin and the `SDA`
+inout, which carry no real logic paths in the default `AVL_ASYNC=0` build).
 
 ## Notes / next steps for a real board
 - Add pin-location assignments (`set_location_assignment`) for SDA/SCL/clk/Avalon to

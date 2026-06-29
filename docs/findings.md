@@ -40,8 +40,7 @@ pull-up), which is precisely where these surface. After the fixes the bus stack 
 end-to-end (**21/21 sim PASS** — broadcast ACK, full ENTDAA DA=0x08, private write,
 private read, GETSTATUS ACK + response start), the **full formal suite is still ALL
 GREEN** (13 module configs + integration = 14 configs, 41 proof tasks, ~280 assertions), and the
-**Altera Quartus Prime Pro 25.3** build still meets timing at 125 MHz (Fmax ~= 244 MHz,
-~904 logic cells, 19 RAM blocks on Cyclone 10 GX).
+**Altera Quartus Prime Pro 25.3** build is clean; internal (reg-to-reg + input) timing meets 125 MHz (+2.4 ns, Fmax ~244 MHz) — the combinational Avalon output-pin paths are pad-buffer-limited in standalone pin synthesis (on-chip IP boundary; see syn/altera/README). 528 ALMs / 348 regs / 2 RAM blocks.
 
 ## Summary of findings
 
@@ -125,7 +124,7 @@ sequenceDiagram
 
 **Re-verified.** `i3c_bus_frontend` formal still green (F-3 gate and START/Sr/STOP
 classification now hold *with* the tail counter in the cone); the fix unblocked all of
-ENTDAA + private R/W in sim; Quartus timing still met.
+ENTDAA + private R/W in sim; Quartus build still clean (internal timing unaffected).
 
 ---
 
@@ -149,7 +148,7 @@ nothing flagged the dangling signal.
 **Re-verified.** `i3c_fifo` proofs extended with `clear`-aware invariants
 (`a_clear: !$past(clear) || (level==0 && overflow==0)`, and the accounting asserts
 exempt a concurrent `clear`) and re-run green; `flush_tx` now observable in sim; Quartus
-timing still met.
+Quartus build still clean (internal timing unaffected).
 
 ---
 
@@ -178,7 +177,7 @@ assembly restarts cleanly for the assigned-address byte.
 **Re-verified.** `i3c_bit_engine` proofs updated to treat `bit_resync` as a third
 framing-reset alongside `start_stb`/`rstart_stb` (the MSb-ordering and sample-capture
 asserts gate on it, e.g. `a_sda_capture`, `a_rx_shift`) and re-run green; `i3c_daa`
-proofs still green; sim now latches DA = 0x08; Quartus timing still met.
+proofs still green; sim now latches DA = 0x08; Quartus build still clean (internal timing unaffected).
 
 ---
 
@@ -200,7 +199,7 @@ on SDA across its full first bit period so the Controller reads it correctly.
 
 **Re-verified.** Bit-engine proofs added `a_tx_first`
 (`first falling after load holds tx_shift`) and kept `a_tx_shift` / `a_tx_load`; all
-green; sim read data now bit-aligned; Quartus timing still met.
+green; sim read data now bit-aligned; Quartus build still clean (internal timing unaffected).
 
 ---
 
@@ -235,7 +234,7 @@ sequenceDiagram
 
 **Re-verified.** `i3c_protocol_fsm` proofs still green (`a_rd_phase: !tx_drive_en ||
 state==S_READ` and the F4/F7 STOP-to-IDLE asserts unaffected); sim private read now
-terminates cleanly; Quartus timing still met.
+terminates cleanly; Quartus build still clean (internal timing unaffected).
 
 ---
 
@@ -260,7 +259,7 @@ downstream consumers are unchanged; only the ACK-decision cycle is corrected.
 
 **Re-verified.** `i3c_ccc` `ccc_ack` / K6 / K7 and `i3c_protocol_fsm` ACK proofs
 re-run green; sim now ACKs and starts the GET response (single-byte GETs complete; see
-FINDING-SIM-7 for the multi-byte case); Quartus timing still met.
+FINDING-SIM-7 for the multi-byte case); Quartus build still clean (internal timing unaffected).
 
 ---
 
@@ -316,7 +315,7 @@ why this stack is trustworthy:
   termination. Every one of the eight findings here lived in precisely the gap the
   idealized model leaves open.
 - **Synthesis + STA (Quartus Prime Pro, Cyclone 10 GX)** proves it is *buildable and
-  closes timing* — the design is real hardware at 125 MHz (Fmax ~= 244 MHz), and every
+  closes timing* — the internal logic is real hardware meeting 125 MHz (reg-to-reg +2.4 ns, Fmax ~244 MHz; the combinational Avalon output pins are pad-buffer-limited standalone, see syn/altera/README), and every
   fix above was re-confirmed to still synthesize and meet timing.
 
 Each method caught what the others structurally cannot. Formal alone would have shipped

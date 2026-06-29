@@ -18,7 +18,7 @@ index, DAA `bit_resync`, FIFO `clear`, front-end release-tail `OE_TAIL`, bit-eng
 |---|---|---|
 | **Formal** | yosys 0.66 + SymbiYosys + boolector | **ALL GREEN** — 41 tasks (bmc + k-induction prove + cover), ~280 assertions |
 | **Simulation** | Icarus Verilog (`iverilog -g2012`), controller BFM + Avalon master | **21 / 21 PASS** (see `sim/README.md`) |
-| **Synthesis + STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G` | **Timing met @ 125 MHz**, Fmax ≈ **244 MHz**, ~**904 logic cells**, **19 RAM blocks** (see `syn/altera/README.md`) |
+| **Synthesis + STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G` | 0 errors; **internal (reg-to-reg + input) timing meets 125 MHz** (+2.4 ns, Fmax ~244 MHz). The combinational Avalon **output**-pin paths (avs_readdata/waitrequest/irq) are pad-buffer-limited in standalone pin synthesis (-2.86 ns) -- an on-chip-IP-boundary / OOC artifact, NOT an in-system path; see syn/altera/README.md. 528 ALMs / 348 regs / 2 RAM blocks |
 
 The three checks are complementary: formal proves the per-module state machines
 exhaustively on idealized one-cycle edge strobes; simulation exercises real end-to-end
@@ -39,7 +39,7 @@ the RX FIFO, read back over Avalon); **private read** (target byte `0xC3`); **GE
 Simulation found **8 integration bugs the per-module formal proofs could not** — formal
 uses idealized one-cycle edge strobes, so only real oversampled bus timing exposes
 release-tail, byte-framing, and read-termination effects. **7 are fixed and re-verified**
-(full formal suite still ALL GREEN, Quartus timing still met); **1 is tracked open**.
+(full formal suite still ALL GREEN, Quartus build still clean); **1 is tracked open**.
 Full write-ups in `docs/findings.md`.
 
 | # | Bug | Fix (RTL signal / module) | State |

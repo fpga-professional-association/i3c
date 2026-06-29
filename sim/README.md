@@ -56,9 +56,16 @@ see; **7 are fixed and re-verified** (the four highlighted above plus FINDING-SI
 `tx_first`, FINDING-SIM-5 `read_done_q`, and FINDING-SIM-6 live-`rnw` CCC-ACK) and **1 is
 tracked open** (FINDING-SIM-7, multi-byte GET response). Full write-ups in
 [`../docs/findings.md`](../docs/findings.md). Every fix was re-verified: full formal suite
-still ALL GREEN, Quartus timing still met (Fmax ≈ 244 MHz).
+still ALL GREEN, Quartus build still clean; internal timing meets 125 MHz (Fmax ≈ 244 MHz). See ../syn/altera/README.md for the I/O-path caveat.
 
 ## Debug aid
 Set `dbg_en=1` (e.g. just before a scenario) to print per-edge internal state
 (START/STOP strobes, bit_cnt, rx_byte, match_7e, ack_oe, sda_oe, daa_active).
 A VCD is written to `sim/tb_i3c_target.vcd`.
+
+## Toolchain note
+Build with the project toolchain (`source tools/env.sh` → OSS CAD Suite **iverilog v14**),
+which `sim/run.sh` uses. The RTL compiles cleanly under it (an explicit `state_e'(...)`
+cast was added in `i3c_protocol_fsm` so the enum-from-ternary assignment is accepted by
+strict iverilog as well as yosys and Quartus). A captured run is in
+[`../reports/sim_run.log`](../reports/sim_run.log).

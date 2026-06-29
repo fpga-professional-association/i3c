@@ -1,0 +1,14 @@
+# STA result by path class (Quartus Prime Pro 25.3, Cyclone 10 GX, 8.0 ns / 125 MHz)
+# Reproduce: ./syn/altera/build.sh all ; then report_timing -to [all_registers] vs -to [all_outputs]
+#
+# Register-to-register + input paths (the actual logic):   worst setup +2.395 ns  -> MET (0 violated)
+# Hold (all):                                               worst       +0.020 ns  -> MET
+# Combinational Avalon OUTPUT pins (avs_readdata/waitrequest/irq): worst -2.858 ns -> NOT closed standalone
+#
+# Unconstrained ports (report_ucp): 1 input + 1 output (tied-off avl_clk + SDA inout),
+#   down from 35 in / 28 out before the SDC was completed.
+#
+# The internal logic meets 125 MHz (reg-to-reg Fmax ~244 MHz). The failing paths are ONLY
+# the combinational Avalon output pins through the FPGA output-pad buffer (~3.65 ns) -- an
+# out-of-context artifact: an Avalon-MM agent is an on-chip IP boundary (no pad buffer in
+# system), and waitrequest is required-combinational. See syn/altera/README.md.

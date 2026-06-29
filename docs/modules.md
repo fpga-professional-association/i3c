@@ -16,10 +16,10 @@ The full SymbiYosys suite is green on the open-source flow (yosys 0.66 + SymbiYo
 boolector): **14 modules + integration**, **41 proof tasks** (`bmc` bounded bug-hunt,
 `prove` k-induction, `cover` reachability/non-vacuity), **~280 assertions**. Simulation
 (Icarus controller-BFM testbench) passes **21/21**; Altera Quartus Prime Pro 25.3 on a
-Cyclone 10 GX meets timing at 125 MHz (Fmax ~244 MHz, ~904 logic cells, 19 RAM blocks).
+Cyclone 10 GX: internal logic meets 125 MHz (reg-to-reg +2.4 ns, Fmax ~244 MHz); combinational Avalon output-pin paths are pad-buffer-limited standalone (on-chip IP boundary — see syn/altera/README). 528 ALMs / 348 regs / 2 RAM blocks.
 
 Simulation surfaced 8 integration bugs the idealized one-cycle-edge formal model missed;
-7 are fixed and re-verified (formal still green, timing still met). The post-fix signals
+7 are fixed and re-verified (formal still green, Quartus build still clean). The post-fix signals
 appearing below are: front-end `OE_TAIL`, bit-engine `bit_resync`/`tx_first`, DAA
 `rxda_enter`, protocol-FSM live `is_read` and `read_done_q`, FIFO `clear`, and the 5-bit
 `app_wr_idx`/`app_rd_idx` register-index window. One bug (FINDING-SIM-7, multi-byte GET

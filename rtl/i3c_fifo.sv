@@ -47,6 +47,10 @@ module i3c_fifo #(
 );
 
   // Storage + pointers + a single occupancy counter (single-clock domain).
+  // Small FIFO: map to fast MLAB/distributed memory, not a big M20K block, so the
+  // FWFT read (mem[rptr] -> rd_data) is fast. (Quartus synthesis attribute; ignored
+  // by yosys/iverilog, so no formal/sim impact.)
+  (* ramstyle = "MLAB, no_rw_check" *)
   logic [DW-1:0] mem [0:DEPTH-1];
   logic [AW-1:0] wptr, rptr;
   logic [AW:0]   level;

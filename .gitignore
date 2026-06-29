@@ -47,3 +47,6 @@ formal/i3c_ibi/
 formal/i3c_error_recovery/
 formal/i3c_avalon_mm/
 formal/i3c_integration/
+# reports/ holds committed build EVIDENCE — keep its logs despite the *.log rule
+!reports/*.log
+!reports/quartus/*.log

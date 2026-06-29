@@ -48,53 +48,80 @@ The objective metric for row 2 is **mutation coverage**, and the open-source too
 This is the open-source equivalent of Cadence JasperGold Coverage / Synopsys VC Formal FCA
 / Certitude.
 
-### Measured results (mcy, BMC depth-20 per-mutant kill test)
+### Measured results (mcy, equivalence-filtered — issue #18)
 
-Harness: `formal/mcy/gen.sh <module> <N> <files...>` builds a per-module mcy project whose
-single test runs the module's own formal proof on each mutant; a mutant is **killed** if an
-assertion fails. Sampled per-module **raw kill rate**:
+Harness: `formal/mcy/gen.sh <module> <N> <files...>` builds a per-module mcy project that
+runs **two** tests on each mutant (`formal/mcy/campaign.sh [size]` runs all modules):
 
-| Module | Raw kill rate | Sample |
-|---|---|---|
-| `i3c_bit_engine` | **73 %** | 55 mutants |
-| `i3c_framer` | ~50 % | (small sample) |
-| `i3c_regfile` | **49 %** | 55 mutants |
-| `i3c_sda_mux` | **47 %** | 51 mutants |
-| `i3c_daa` | ~35 % | 54 mutants |
-| `i3c_ccc` | ~32 % | 80 mutants |
+- **`test_fm`** — the module's own formal proof on the mutant (BMC depth 20). A mutant is
+  **killed** if an assertion fails.
+- **`test_eq`** — a **sequential equivalence check** of the mutant against the original
+  (`equiv_make` + `equiv_simple` + `equiv_induct`, `equiv_status -assert`). PASS means the
+  mutant is **logically equivalent** (a NOCHANGE mutant) and therefore *uncoverable by
+  construction*. (A plain BMC miter is wrong here — the two copies have free initial FF /
+  memory state, so they differ at t=0 before the synchronous reset equalises them;
+  `equiv_induct` reasons over reachable states instead.)
 
-**Read these numbers correctly — the raw kill rate is a deliberate LOWER BOUND, not a
-"percent verified".** Three effects deflate it, all confirmed:
+Each mutant is then classified and **NOCHANGE mutants are excluded from the denominator**:
 
-1. **No-change / equivalent mutations count as survivors.** mcy's own `mutate -mode none`
-   baseline (a guaranteed no-op) is tagged UNCOVERED in every run — direct proof that a
-   meaningful fraction of "survivors" are mutations that change *nothing observable* and
-   that *no* property could or should catch. Typically 30–50 % of random mutations are
-   equivalent. A rigorous score filters these with an equivalence (NOCHANGE) check; this
-   harness does not, so the true property-relevant coverage is **higher** than the table.
-2. **BMC bound.** Each mutant is killed only if an assertion fails within depth 20; the
-   unbounded k-induction proof (what the project actually ships) would catch at least as
-   many. Lower bound again.
-3. **Formal-only logic is in the mutated netlist.** Mutating a ghost/cover signal cannot
-   break a functional assertion — another survivor that isn't a real hole.
+| Classification | `test_fm` | `test_eq` | Counts toward |
+|---|---|---|---|
+| **COVERED** (killed) | FAIL | not equiv | numerator + denominator |
+| **UNCOVERED** (real gap) | PASS | not equiv | denominator only |
+| **NOCHANGE** (no-op) | PASS | equiv | **excluded** |
+| **EQGAP** (spurious) | FAIL | equiv | excluded (flagged) |
+
+**Filtered coverage = COVERED / (COVERED + UNCOVERED).**  Measured (per-module sample, the
+full table is regenerated into `formal/mcy/results.txt`):
+
+| Module | Filtered coverage | Raw kill rate | killed / killable | NOCHANGE excluded |
+|---|---|---|---|---|
+| `i3c_bit_engine` | **72.2 %** | 65.0 % | 13 / 18 | 2 |
+| `i3c_regfile` | **64.7 %** | 55.0 % | 11 / 17 | 3 |
+| `i3c_error_recovery` | **61.1 %** | 55.0 % | 11 / 18 | 2 |
+| `i3c_framer` | **58.8 %** | 50.0 % | 10 / 17 | 2 (1 EQGAP) |
+| `i3c_protocol_fsm` | **55.6 %** | 50.0 % | 10 / 18 | 2 |
+| `i3c_fifo` | **42.1 %** | 40.0 % | 8 / 19 | 1 |
+| `i3c_sda_mux` | **38.5 %** | 25.0 % | 5 / 13 | 7 |
+| `i3c_avalon_mm` | **31.2 %** | 25.0 % | 5 / 16 | 4 |
+| `i3c_ccc` | **26.3 %** | 25.0 % | 5 / 19 | 1 |
+| `i3c_bus_frontend` | **22.2 %** | 20.0 % | 4 / 18 | 2 |
+
+In **every** module the filtered coverage is higher than the raw kill rate — the gap is the
+NOCHANGE mutants the equivalence check removes (most dramatically `i3c_sda_mux`: 7 of its 20
+sampled mutations are logically equivalent no-ops, lifting 25 % → 38.5 %). `i3c_daa` and
+`i3c_ibi` are omitted here: their sequential `equiv_induct` pass exceeded the per-mutant
+time budget on this machine — re-run them with a larger `timeout` in `gen.sh`/`campaign.sh`.
+
+**Read these numbers correctly — even filtered, this is coverage of the SAFETY/PROTOCOL
+property set, not a "percent of the spec verified".** Two effects still keep it conservative:
+
+1. **BMC bound.** The kill test fails a mutant only if an assertion breaks within depth 20;
+   the unbounded k-induction proof the project ships would catch at least as many. Lower
+   bound. (The equivalence horizon matches, so NOCHANGE filtering stays consistent.)
+2. **Formal-only logic is in the mutated netlist.** Mutating a ghost/cover signal cannot
+   break a functional assertion — those land in NOCHANGE or UNCOVERED, not as real holes.
 
 ### What the numbers actually tell you
 
-Even as a lower bound, the spread is the real signal. Modules whose properties closely
-track the datapath (`bit_engine` 73 %, `regfile` 49 %, `sda_mux` 47 %) score higher than
-the big combinational decoders (`ccc`/`daa` ~32 %), and that is **exactly what a
-safety-and-protocol property set should look like**: it pins down contention, framing,
-ACK/NACK, ordering, and identity — *not* every functional bit of every CCC decode. Pushing
-any module toward >90 % means writing a near-complete **functional reference model**, which
-is a different and far larger goal than the safety/conformance invariants proven here.
+The spread is the real signal. Modules whose properties closely track the datapath
+(`bit_engine` 72 %, `regfile` 65 %, `error_recovery` 61 %, `framer` 59 %, `protocol_fsm`
+56 %) score higher than the wide combinational decoders / boundary blocks (`ccc` 26 %,
+`bus_frontend` 22 %), and that is **exactly what a safety-and-protocol property set should
+look like**: it pins down contention, framing, ACK/NACK, ordering, and identity — *not*
+every functional bit of every CCC decode. Pushing any module toward >90 % means writing a
+near-complete **functional reference model**, a different and far larger goal than the
+safety/conformance invariants proven here.
 
-The actionable output is the **surviving-mutant list** per module — a concrete, prioritized
-to-do list of functional assertions to add if higher coverage is wanted.
+The actionable output is the **surviving-mutant (UNCOVERED) list** per module — a concrete,
+prioritized to-do list of functional assertions to add if higher coverage is wanted — now
+cleanly separated from the NOCHANGE no-ops that no property should ever catch.
 
 **Bottom line:** mutation testing confirms, quantitatively, what §1 says qualitatively — the
 proofs are exhaustive for the (safety-focused) properties written; the property set is not a
-complete functional spec, so it does **not** have "100 % coverage," and the measured kill
-rate (a conservative lower bound) makes that concrete.
+complete functional spec, so it does **not** have "100 % coverage." With the equivalence
+(NOCHANGE) filter the measured coverage now reflects *property-relevant* mutations only, and
+is consistently higher than the raw kill rate it replaces.
 
 ## 4. How a third party confirms the result — no license, no trust required
 

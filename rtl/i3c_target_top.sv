@@ -843,8 +843,16 @@ module i3c_target_top #(
     a_daa_od       : assert (!daa_oe || !daa_o);
     // ACK is open-drain drive-Low only (never push-pull High).
     a_ack_od       : assert (!pf_ack_oe || !pf_ack_o);
-    // While the Target drives, the front-end reports no bus condition (F-3 at top).
-    a_f3_top       : assert (!sda_oe || !(fe_start_stb || fe_rstart_stb || fe_stop_stb));
+    // F-3 at top: while the Target's drive is in effect at the front-end's gate, the
+    // front-end reports no bus condition. The gate is REGISTERED (sda_oe_gate, ADAPT-1 --
+    // a deliberate combinational-loop break: fr_tbit_oe depends on rstart_stb, so a
+    // combinational gate on the resolved sda_oe would form sda_oe -> gate -> rstart_stb
+    // -> fr_tbit_oe -> sda_oe). The Target's own drive edge reaches the detector only
+    // AFTER the SYNC_STAGES synchronizer (>= 2 cyc), by which time sda_oe_gate is already
+    // asserted, so a self-driven edge is always suppressed. Asserting against the resolved
+    // (combinational) sda_oe instead is off by that one registration cycle and is NOT a
+    // real F-3 guarantee (it can spuriously coincide with a controller-formed condition).
+    a_f3_top       : assert (!sda_oe_gate || !(fe_start_stb || fe_rstart_stb || fe_stop_stb));
   end
 
   // ---- cross-covers (integration-reachable witnesses; non-vacuity evidence) -

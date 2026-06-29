@@ -77,13 +77,27 @@ Legend: ✅ pass · ⚠️ bounded/partial · – n/a · lint = parses, not SVA-
 
 ## Known gaps (honest accounting — to close before tape-out)
 
-1. **Integration F-1/F-2/F-3 are BMC-bounded (depth 40) + cover (depth 120), NOT
-   k-induction.** basecase + BMC pass; the unbounded induction step needs auxiliary
-   reachable-state invariants (notably `a_f3_top`, the registered ADAPT-1 gate — the F-7
-   risk from `docs/critique.md`). The integration `.sby` deliberately omits a `prove`
-   task and strips every per-module `$check` so its results never rely on unit assumes.
-   **Per-module properties *are* unbounded (k-induction).** Top hardening task: add the
-   invariants that make the cross-cutting top properties inductive.
+1. **Integration F-1/F-2/F-3 are BMC-bounded (depth 40) + cover (depth 120), NOT yet
+   k-induction** (issue #3, partially advanced). Pushing toward `prove` uncovered — and
+   fixed — two real, pre-existing issues the depth-40 BMC had masked:
+   - **`a_f3_top` was reachably false at depth 53.** The F-3 top assert checked the
+     *resolved* (combinational) `sda_oe`, but the front-end gates on the **registered**
+     `sda_oe_gate` (ADAPT-1, a deliberate combinational-loop break: `fr_tbit_oe` depends
+     on `rstart_stb`). That one-cycle skew makes the resolved-`sda_oe` form spuriously
+     coincide with a controller-formed condition. **Fixed:** `a_f3_top` now asserts
+     against `sda_oe_gate` — the signal the front-end actually gates on; the Target's own
+     drive edge reaches the detector only after the `SYNC_STAGES` synchroniser (≥2 cyc),
+     by which time the gate is asserted, so a self-driven edge is always suppressed.
+   - **`be_rdata_oe` (bit engine) was not released during the read T-bit slot**, so it and
+     the framer's `fr_tbit_oe` both drove SDA in the 9th slot — a single-owner violation,
+     and on the final byte the bit-engine fill `1` fought the framer's `T=0`. **Fixed:**
+     `tx_drive_en` now gates on `!ninth_slot` (bit engine drives data bits, framer owns
+     the T-bit). Sim stays 29/29; the full suite stays ALL GREEN.
+   - **Residual:** `a_single_owner` ($onehot0) is now *reachably* true but not yet
+     k-inductive — the framer's `drv_active` register lingers ~1 cycle after the FSM
+     leaves S_READ, so a complete ownership-invariant chain (drv_active ↔ FSM-state
+     lifecycle, DAA/IBI active-vs-state exclusion) is needed for the unbounded induction.
+     That invariant-engineering cascade is the remaining open item.
 2. **FINDING-SIM-7 (FIXED) — multi-byte GET responses.** Previously the 2nd+ response
    bytes were shifted/dropped because the FSM reloaded at `byte_done` (mid-byte). The
    reload now happens at `ninth_fell` (the same bit-phase as the first byte's load) and

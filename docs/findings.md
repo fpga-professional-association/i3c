@@ -40,7 +40,7 @@ pull-up), which is precisely where these surface. After the fixes the bus stack 
 end-to-end (**21/21 sim PASS** — broadcast ACK, full ENTDAA DA=0x08, private write,
 private read, GETSTATUS ACK + response start), the **full formal suite is still ALL
 GREEN** (13 module configs + integration = 14 configs, 41 proof tasks, ~280 assertions), and the
-**Altera Quartus Prime Pro 25.3** build is clean; internal (reg-to-reg + input) timing meets 125 MHz (+2.4 ns, Fmax ~244 MHz) — the combinational Avalon output-pin paths are pad-buffer-limited in standalone pin synthesis (on-chip IP boundary; see syn/altera/README). 528 ALMs / 348 regs / 2 RAM blocks.
+**Altera Quartus Prime Pro 25.3** build is clean; internal (reg-to-reg + input) timing meets 125 MHz (+2.15 ns, Fmax ~244 MHz) — the combinational Avalon output-pin paths are pad-buffer-limited in standalone pin synthesis (on-chip IP boundary; see syn/altera/README). 528 ALMs / 348 regs / 2 RAM blocks.
 
 ## Summary of findings
 
@@ -315,7 +315,7 @@ why this stack is trustworthy:
   termination. Every one of the eight findings here lived in precisely the gap the
   idealized model leaves open.
 - **Synthesis + STA (Quartus Prime Pro, Cyclone 10 GX)** proves it is *buildable and
-  closes timing* — the internal logic is real hardware meeting 125 MHz (reg-to-reg +2.4 ns, Fmax ~244 MHz; the combinational Avalon output pins are pad-buffer-limited standalone, see syn/altera/README), and every
+  closes timing* — the internal logic is real hardware meeting 125 MHz (reg-to-reg +2.15 ns, Fmax ~244 MHz; the combinational Avalon output pins are pad-buffer-limited standalone, see syn/altera/README), and every
   fix above was re-confirmed to still synthesize and meet timing.
 
 Each method caught what the others structurally cannot. Formal alone would have shipped

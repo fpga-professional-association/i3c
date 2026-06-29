@@ -6,7 +6,7 @@ interface. Start with the project [README](../README.md), then dive in by topic 
 
 Status at a glance: **formal ALL GREEN** (14 modules + integration, 41 proof tasks,
 ~280 assertions) · **simulation 21 / 21 PASS** (Icarus controller BFM) · **Quartus Prime
-Pro 25.3** internal logic meets 125 MHz (reg-to-reg +2.4 ns, Fmax ≈ 244 MHz; combinational Avalon output-pin paths are pad-buffer-limited standalone — see syn/altera/README) on Cyclone 10 GX, 528 ALMs / 348 regs / 2 RAM.
+Pro 25.3** internal logic meets 125 MHz (reg-to-reg +2.15 ns, Fmax ≈ 244 MHz; readdata registered (2-cycle); residual avs_waitrequest −1.81 ns is required-combinational, pad-buffer-limited only standalone — see syn/altera/README) on Cyclone 10 GX, 528 ALMs / 348 regs / 2 RAM.
 
 ## Overview
 

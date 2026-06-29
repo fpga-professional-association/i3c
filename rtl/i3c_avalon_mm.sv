@@ -229,19 +229,29 @@ module i3c_avalon_mm #(
   assign tx_wr_data = { avs_writedata[i3c_pkg::TXF_LAST], avs_writedata[7:0] };
 
   // ---------------------------------------------------------------------------
-  // Read pipeline + outstanding-transaction scoreboard (D-2). Fixed 1-cycle
-  // latency: a read accepted at T delivers readdatavalid at T+1.
+  // Read pipeline + outstanding-transaction scoreboard (D-2). Registered 2-cycle
+  // latency (issue #1): a read accepted at T is SAMPLED at T+1 (rdv_q / rd_data_comb)
+  // and the REGISTERED result is DELIVERED at T+2 (rdv_q2 / rd_data_q). Registering
+  // avs_readdata puts the launch flop next to the output pad, which closes the
+  // RX-FIFO-read -> readback-mux -> output-pin path in standalone pin synthesis
+  // (the combinational version missed timing by ~2.9 ns). Avalon-MM permits this:
+  // latency is variable and signalled by readdatavalid.
   // ---------------------------------------------------------------------------
-  logic        rdv_q;            // registered "read accepted last cycle" -> readdatavalid
-  logic [4:0]  rd_idx_q;         // address of the in-flight read
-  logic [1:0]  outstanding;      // scoreboard count (bounded to 0/1 by design)
+  logic        rdv_q;            // stage 1: read accepted last cycle (SAMPLE beat)
+  logic        rdv_q2;           // stage 2: registered -> readdatavalid (DELIVERY beat)
+  logic [4:0]  rd_idx_q;         // address of the in-flight read (valid on the sample beat)
+  logic [31:0] rd_data_comb;     // combinational readback mux (valid on the sample beat)
+  logic [31:0] rd_data_q;        // registered read data -> avs_readdata (delivery beat)
+  logic [1:0]  outstanding;      // scoreboard count (bounded to 0..2: two pipe stages)
 
-  assign avs_readdatavalid = rdv_q;
+  assign avs_readdatavalid = rdv_q2;
+  assign avs_readdata      = rd_data_q;
   assign app_rd_idx        = rd_idx_q;
 
-  // RX_DATA pops only on the readdatavalid beat for an RX_DATA read, and only
-  // when the FIFO is non-empty (D-3, no underflow). Present-and-pop are atomic on
-  // the same head (readdata is combinational below).
+  // RX_DATA pops on the SAMPLE beat (rdv_q) of an RX_DATA read, when non-empty
+  // (D-3, no underflow). Sample-and-pop are atomic on the same head; the popped
+  // word is captured into rd_data_q and delivered one cycle later with
+  // readdatavalid -- so a pipelined second read still sees the advanced pointer.
   assign rx_pop = rdv_q && (rd_idx_q == IDX_RX_DATA) && !rx_empty;
 
   // ---------------------------------------------------------------------------
@@ -267,15 +277,16 @@ module i3c_avalon_mm #(
                          da_valid };       // [0]
 
   // ---------------------------------------------------------------------------
-  // Read-data combinational mux (valid only on the readdatavalid beat).
+  // Read-data combinational readback mux (valid on the SAMPLE beat). Captured into
+  // the rd_data_q output register below and delivered on the next cycle (issue #1).
   // ---------------------------------------------------------------------------
   always_comb begin
     unique case (rd_idx_q)
-      IDX_CTRL    : avs_readdata = { 26'b0, ctrl_reg };                          // flush bits read 0
-      IDX_STATUS  : avs_readdata = status_word;
-      IDX_INT_EN  : avs_readdata = { 22'b0, int_enable };
-      IDX_INT_ST  : avs_readdata = { 22'b0, int_status };
-      IDX_DYN_ADDR: avs_readdata = { 24'b0, da_valid, dyn_addr };
+      IDX_CTRL    : rd_data_comb = { 26'b0, ctrl_reg };                          // flush bits read 0
+      IDX_STATUS  : rd_data_comb = status_word;
+      IDX_INT_EN  : rd_data_comb = { 22'b0, int_enable };
+      IDX_INT_ST  : rd_data_comb = { 22'b0, int_status };
+      IDX_DYN_ADDR: rd_data_comb = { 24'b0, da_valid, dyn_addr };
       IDX_PID_LOW,
       IDX_PID_HIGH,
       IDX_IDENT,
@@ -283,13 +294,13 @@ module i3c_avalon_mm #(
       IDX_MRL,
       IDX_GS_CFG,
       IDX_CAPS,
-      IDX_RESET   : avs_readdata = app_rd_data;
-      IDX_IBI_CTRL: avs_readdata = { 8'b0, ibi_plen_q, ibi_prn_q, 2'b0, ibi_mdb_q, 5'b0 };
-      IDX_IBI_ST  : avs_readdata = { 27'b0, ibi_deferred, ibi_arb_lost, ibi_nacked, ibi_acked, ibi_busy };
-      IDX_RX_DATA : avs_readdata = rx_empty ? 32'b0 : { 21'b0, rx_rd_data };
-      IDX_TX_DATA : avs_readdata = 32'b0;                                        // write-only
-      IDX_FIFO_ST : avs_readdata = { 14'b0, tx_full, rx_empty, tx_level, rx_level };
-      default     : avs_readdata = 32'b0;
+      IDX_RESET   : rd_data_comb = app_rd_data;
+      IDX_IBI_CTRL: rd_data_comb = { 8'b0, ibi_plen_q, ibi_prn_q, 2'b0, ibi_mdb_q, 5'b0 };
+      IDX_IBI_ST  : rd_data_comb = { 27'b0, ibi_deferred, ibi_arb_lost, ibi_nacked, ibi_acked, ibi_busy };
+      IDX_RX_DATA : rd_data_comb = rx_empty ? 32'b0 : { 21'b0, rx_rd_data };
+      IDX_TX_DATA : rd_data_comb = 32'b0;                                        // write-only
+      IDX_FIFO_ST : rd_data_comb = { 14'b0, tx_full, rx_empty, tx_level, rx_level };
+      default     : rd_data_comb = 32'b0;
     endcase
   end
 
@@ -305,14 +316,19 @@ module i3c_avalon_mm #(
       ibi_prn_q   <= 1'b0;
       ibi_plen_q  <= 8'b0;
       rdv_q       <= 1'b0;
+      rdv_q2      <= 1'b0;
       rd_idx_q    <= 5'b0;
+      rd_data_q   <= 32'b0;
       outstanding <= 2'b0;
     end else begin
-      // --- read scoreboard (D-2) ---
+      // --- read pipeline + scoreboard (D-2): accept -> sample (rdv_q) ->
+      //     deliver (rdv_q2 / rd_data_q). Count decrements on the delivery beat. ---
       rdv_q       <= read_accept;
       if (read_accept) rd_idx_q <= tgt;
+      rdv_q2      <= rdv_q;
+      rd_data_q   <= rd_data_comb;
       outstanding <= outstanding + (read_accept ? 2'd1 : 2'd0)
-                                 - (rdv_q       ? 2'd1 : 2'd0);
+                                 - (rdv_q2      ? 2'd1 : 2'd0);
 
       // --- CTRL register write ---
       if (write_accept && (tgt == IDX_CTRL) && avs_byteenable[0])
@@ -370,19 +386,21 @@ module i3c_avalon_mm #(
     // V6 : irq is exactly the enabled-status reduction.
     v6_irq          : assert (irq == (|(int_status & int_enable)));
 
-    // V1 / D-2 : scoreboard invariants.
-    v1_inv_oc       : assert (outstanding == (rdv_q ? 2'd1 : 2'd0));     // helper invariant
-    v1_no_overflow  : assert (outstanding <= 2'd1);
+    // V1 / D-2 : scoreboard invariants (two pipe stages: rdv_q sample, rdv_q2 deliver).
+    v1_inv_oc       : assert (outstanding == ((rdv_q ? 2'd1 : 2'd0) +
+                                              (rdv_q2 ? 2'd1 : 2'd0)));   // helper invariant (inductive)
+    v1_no_overflow  : assert (outstanding <= 2'd2);
     v1_rdv_gt0      : assert (!avs_readdatavalid || (outstanding != 2'd0));
-    // underflow guard: readdatavalid (a pending decrement) implies count > 0.
-    v1_no_underflow : assert (!rdv_q || (outstanding >= 2'd1));
+    // underflow guard: the delivery beat (a pending decrement) implies count > 0.
+    v1_no_underflow : assert (!rdv_q2 || (outstanding >= 2'd1));
 
     // V5 : FIFO no-overrun / no-underrun.
     v5_tx_push_ok   : assert (!tx_push || !tx_full);
     v5_rx_pop_ok    : assert (!rx_pop  || !rx_empty);
 
-    // D-3 : RX pop discipline (only on readdatavalid beat of an RX_DATA read).
-    d3_pop_rdv      : assert (!rx_pop || (avs_readdatavalid && (rd_idx_q == IDX_RX_DATA)));
+    // D-3 : RX pop discipline (only on the SAMPLE beat (rdv_q) of an RX_DATA read;
+    // the popped word is then registered and delivered one cycle later).
+    d3_pop_rdv      : assert (!rx_pop || (rdv_q && (rd_idx_q == IDX_RX_DATA)));
     d3_pop_nonempty : assert (!rx_pop || !rx_empty);
 
     // V2 : command hold / back-pressure correctness for the TX_DATA path.
@@ -399,15 +417,18 @@ module i3c_avalon_mm #(
     v4_wr_not_read  : assert (!app_wr_en || !avs_read);
     v4_be_forward   : assert (!app_wr_en || (app_wr_be == avs_byteenable));
     // app_rd_idx only ever points at an RF-owned register when its value is used
-    // (readdatavalid beat of an RF-owned read).
-    v4_rd_idx_rf    : assert (!(avs_readdatavalid && rf_readable(rd_idx_q)) ||
+    // (the SAMPLE beat (rdv_q) of an RF-owned read, where rd_data_comb is captured).
+    v4_rd_idx_rf    : assert (!(rdv_q && rf_readable(rd_idx_q)) ||
                               (app_rd_idx == rd_idx_q));
   end
 
   // ---- Multi-cycle ($past) safety -------------------------------------------
   always_ff @(posedge clk) if (f_past_valid && rst_n && $past(rst_n)) begin
-    // V1 : readdatavalid only after an accepted read one cycle earlier.
-    v1_rdv_after_rd : assert (!avs_readdatavalid || $past(read_accept));
+    // V1 : 2-cycle pipeline -- readdatavalid (delivery) implies the sample beat one
+    // cycle earlier, and the sample beat implies an accepted read the cycle before
+    // that. Chained so readdatavalid => read accepted exactly two cycles earlier.
+    v1_rdv_after_rd : assert (!avs_readdatavalid || $past(rdv_q));
+    v1_rdv_chain    : assert (!rdv_q             || $past(read_accept));
 
     // V3 : W1C - a set bit that is W1C-cleared and not re-set is 0 next cycle.
     v3_w1c_clears   : assert ((int_status &

@@ -401,7 +401,7 @@ Params: `AW=5` (word address). Register map in §3.
 | `rx_empty` | in | 1 | RX empty |
 | `rx_level` | in | 8 | RX occupancy |
 | `rx_overflow` | in | 1 | RX overflow sticky |
-| `rx_pop` | out | 1 | pop RX (only on readdatavalid of RX_DATA, D-3) |
+| `rx_pop` | out | 1 | pop RX on the read SAMPLE beat of RX_DATA (one cycle before readdatavalid; readdata is registered, issue #1), D-3 |
 | **TX FIFO (write side)** | | | |
 | `tx_full` | in | 1 | TX full |
 | `tx_level` | in | 8 | TX occupancy |

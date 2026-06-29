@@ -13,7 +13,7 @@ The design is checked **three independent ways**:
 | Method | Tool | Result |
 |---|---|---|
 | **Formal** | yosys 0.66 + SymbiYosys + boolector | **ALL GREEN** — 14 configs, 41 proof tasks (BMC + k-induction + cover), ~280 assertions |
-| **Simulation** | Icarus Verilog (controller BFM + Avalon master) | **21 / 21 PASS** — broadcast ACK, full ENTDAA, private write/read, GETSTATUS |
+| **Simulation** | Icarus Verilog (controller BFM + Avalon master) | **29/29 PASS** — broadcast ACK, full ENTDAA, private write/read, GETSTATUS |
 | **Synthesis / STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX | **Internal logic meets 125 MHz** (reg-to-reg +2.15 ns, Fmax ≈ 244 MHz); `avs_readdata` is registered (2-cycle read); the one residual output path is the required-combinational `avs_waitrequest` (−1.81 ns), pad-buffer-limited only in standalone pin synthesis — see [`syn/altera/README.md`](syn/altera/README.md). 528 ALMs / 348 regs / 2 RAM blocks |
 
 ---
@@ -139,7 +139,7 @@ flowchart TB
 source tools/env.sh          # puts yosys / SymbiYosys / boolector on PATH
 cd formal && ./run.sh        # or ./run.sh i3c_ccc to prove a single module
 
-# 2) Simulation — Icarus controller-BFM testbench (21/21 PASS)
+# 2) Simulation — Icarus controller-BFM testbench (29/29 PASS)
 ./sim/run.sh                 # compiles with iverilog -g2012, prints the PASS/FAIL tally
 
 # 3) Altera synthesis + place&route + STA (Quartus Prime Pro 25.3)
@@ -158,13 +158,13 @@ and toolchain paths.
 | Method | What it covers | Headline |
 |---|---|---|
 | **Formal** (yosys 0.66 + SymbiYosys + boolector) | Per-module + integration safety/correctness invariants: contention-freedom (F-1), single-owner SDA `$onehot0` (F-2), self-drive gate (F-3), ACK/NACK correctness, T-bit/parity, address matching, ENTDAA, CCC decode, IBI gating, error recovery, Avalon-MM compliance | **ALL GREEN** — 14 configs (13 modules + integration), 41 tasks, ~280 assertions |
-| **Simulation** (Icarus, controller BFM + Avalon master) | Real end-to-end transactions on an oversampled open-drain bus: broadcast `0x7E` ACK, full ENTDAA (DA latches `0x08`), private write (`0x5C` → RX FIFO), private read (`0xC3`), GETSTATUS ACK + response | **21 / 21 PASS** |
+| **Simulation** (Icarus, controller BFM + Avalon master) | Real end-to-end transactions on an oversampled open-drain bus: broadcast `0x7E` ACK, full ENTDAA (DA latches `0x08`), private write (`0x5C` → RX FIFO), private read (`0xC3`), GETSTATUS ACK + response | **29/29 PASS** |
 | **Synthesis / STA** (Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G`) | Real synthesizability, place & route, static timing | **Internal logic meets 125 MHz** (reg-to-reg +2.15 ns, Fmax ≈ 244 MHz); `avs_readdata` is registered (2-cycle read); the one residual output path is the required-combinational `avs_waitrequest` (−1.81 ns), pad-buffer-limited only in standalone pin synthesis — see [`syn/altera/README.md`](syn/altera/README.md). 528 ALMs / 348 regs / 2 RAM blocks |
 
 The per-module formal proofs use an **idealized one-cycle edge model** (one strobe = one
 settled bus edge). Simulation, with real oversampled timing, therefore found **8 integration
 bugs the formal proofs could not see** — **7 are fixed and re-verified** (formal still ALL
-GREEN, Quartus build still clean) and **1 is tracked**:
+GREEN, Quartus build still clean) -- all 8 are now fixed:
 
 1. **Fixed** — GETCAPS/RESET reads returned 0: a 4-bit `app_*_idx` aliased register indices
    16/17 to 0. Widened `app_wr_idx`/`app_rd_idx` to 5-bit across `i3c_regfile` /
@@ -183,10 +183,13 @@ GREEN, Quartus build still clean) and **1 is tracked**:
 7. **Fixed** (FINDING-SIM-6) — every directed GET was wrongly NACKed (`is_read` used the
    latched `rnw_q`, stale at the CCC ACK decision). The FSM now drives `is_read` from the
    *live* `rnw` at `S_ADDR && byte_done`, else `rnw_q`.
-8. **Tracked** (FINDING-SIM-7, open) — multi-byte GET responses currently drive only the
-   first byte (`resp_idx` increments at `byte_done`, so byte-0's T-bit already sees
-   `resp_idx == 1` and ends early). Single-byte GETs + ACK/response-start work today; a
-   decoupled response pipeline is the planned fix.
+8. **Fixed** (FINDING-SIM-7) — multi-byte GET responses drove only the first byte and
+   shifted the rest, because the FSM reloaded the next response byte at `byte_done` (the
+   8th-bit rising, mid-byte) so the reloaded MSb was consumed by the previous byte's T-bit
+   slot. The reload now happens at `ninth_fell` (after the T-bit, the same bit-phase as
+   the first byte's load); `i3c_ccc` advances `resp_idx` and applies a 1-ahead response
+   look-ahead (`resp_sel`) at that same data-phase boundary. Verified by a GETPID read
+   (bytes `05 4A 12 34 56 78`) in sim and the re-run formal proofs.
 
 See `docs/verification_status.md` for the per-module proof matrix and the remaining
 hardening tasks (notably making the integration F-1/F-2/F-3 properties inductive).
@@ -270,7 +273,7 @@ Full index: [`docs/README.md`](docs/README.md). Highlights:
 - [`docs/verification_status.md`](docs/verification_status.md) — the per-module proof
   matrix, the three-way cross-check, and known gaps.
 - [`docs/findings.md`](docs/findings.md) — the 8 integration bugs simulation caught that
-  the per-module formal proofs missed (7 fixed and re-verified, 1 tracked open).
+  the per-module formal proofs missed (all 8 fixed and re-verified).
 - [`sim/README.md`](sim/README.md) — testbench structure and results.
 - [`syn/altera/README.md`](syn/altera/README.md) — Quartus build, device, and STA results.
 - `docs/critique.md`, `docs/open_questions.md`, `docs/assume_ledger.md` — design critique,

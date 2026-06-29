@@ -17,7 +17,7 @@ sim/run.sh          # compile (iverilog -g2012) + run; prints PASS/FAIL tally
 This covers what formal cannot: real end-to-end transactions, oversampled bus timing,
 and full-sequence liveness.
 
-## Current results — 21 / 21 PASS
+## Current results — 29/29 PASS
 
 **The integrated stack works end-to-end:**
 - Avalon path: PID/BCR/DCR identity, **GETCAPS** (0x0200), CTRL R/W, DYN_ADDR,
@@ -35,7 +35,7 @@ The three earlier read-path failures were **testbench-stimulus accuracy** in the
 read-termination handshake (the first read sample landed one bit late and the imperfect
 read-end left the bus mid-frame). Refining the BFM read-termination tasks — alongside the
 RTL read fixes (FINDING-SIM-4 `tx_first`, FINDING-SIM-5 `read_done_q`) — brought the
-private-read and GETSTATUS scenarios to PASS (**21/21**).
+private-read and GETSTATUS scenarios to PASS (**29/29**).
 
 ## Bugs this testbench found and we FIXED (formal re-verified + Quartus re-confirmed)
 1. **GETCAPS/RESET read returned 0** — 4-bit `app_*_idx` aliased indices 16/17 to 0.
@@ -52,9 +52,9 @@ private-read and GETSTATUS scenarios to PASS (**21/21**).
    `i3c_fifo` and wired the flush pulses.
 
 In total, simulation found **8 integration bugs** the per-module formal proofs could not
-see; **7 are fixed and re-verified** (the four highlighted above plus FINDING-SIM-4
-`tx_first`, FINDING-SIM-5 `read_done_q`, and FINDING-SIM-6 live-`rnw` CCC-ACK) and **1 is
-tracked open** (FINDING-SIM-7, multi-byte GET response). Full write-ups in
+see; **all 8 are fixed and re-verified** (the four highlighted above plus FINDING-SIM-4
+`tx_first`, FINDING-SIM-5 `read_done_q`, FINDING-SIM-6 live-`rnw` CCC-ACK, and
+FINDING-SIM-7 multi-byte GET response reload at `ninth_fell`). Full write-ups in
 [`../docs/findings.md`](../docs/findings.md). Every fix was re-verified: full formal suite
 still ALL GREEN, Quartus build still clean; internal timing meets 125 MHz (Fmax ≈ 244 MHz). See ../syn/altera/README.md for the I/O-path caveat.
 

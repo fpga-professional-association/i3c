@@ -7,7 +7,7 @@ the open-source flow). Committed here so the evidence is in-repo, not just on di
 | File | Flow | Command that produced it |
 |---|---|---|
 | `formal_run.log` | SymbiYosys formal suite (ALL GREEN, 41 tasks) | `source tools/env.sh && cd formal && ./run.sh` |
-| `sim_run.log` | Icarus simulation (21/21 PASS) | `source tools/env.sh && ./sim/run.sh` |
+| `sim_run.log` | Icarus simulation (29/29 PASS) | `source tools/env.sh && ./sim/run.sh` |
 | `quartus/build_console.log` | Quartus synth + fit + STA console | `./syn/altera/build.sh all` |
 | `quartus/i3c_target.syn.summary` | Synthesis summary | (Quartus) |
 | `quartus/i3c_target.fit.summary` | Fitter summary — **528 ALMs, 348 regs, 2 RAM blocks** | (Quartus) |

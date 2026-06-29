@@ -17,7 +17,7 @@ index, DAA `bit_resync`, FIFO `clear`, front-end release-tail `OE_TAIL`, bit-eng
 | Check | Tool | Result |
 |---|---|---|
 | **Formal** | yosys 0.66 + SymbiYosys + boolector | **ALL GREEN** — 41 tasks (bmc + k-induction prove + cover), ~280 assertions |
-| **Simulation** | Icarus Verilog (`iverilog -g2012`), controller BFM + Avalon master | **21 / 21 PASS** (see `sim/README.md`) |
+| **Simulation** | Icarus Verilog (`iverilog -g2012`), controller BFM + Avalon master | **29/29 PASS** (see `sim/README.md`) |
 | **Synthesis + STA** | Altera Quartus Prime Pro 25.3, Cyclone 10 GX `10CX220YF780E5G` | 0 errors; **internal (reg-to-reg + input) timing meets 125 MHz** (+2.15 ns, Fmax ~244 MHz). The combinational Avalon **output**-pin paths (avs_readdata/waitrequest/irq) are pad-buffer-limited in standalone pin synthesis (-1.81 ns, now just avs_waitrequest after readdata was registered) -- an on-chip-IP-boundary / OOC artifact, NOT an in-system path; see syn/altera/README.md. 528 ALMs / 348 regs / 2 RAM blocks |
 
 The three checks are complementary: formal proves the per-module state machines
@@ -29,17 +29,17 @@ target).
 
 Simulation coverage (all PASS): broadcast `0x7E+W` ACK; **full ENTDAA** (64-bit payload,
 assigned DA latches as `0x08`, target ACKs the address); **private write** (`0x5C` into
-the RX FIFO, read back over Avalon); **private read** (target byte `0xC3`); **GETSTATUS**
-(7E+W ACK, DA+R ACK, single-byte status response); plus the Avalon register surface
+the RX FIFO, read back over Avalon); **private read** (target byte `0xC3`); **GETSTATUS** + **GETPID**
+(7E+W ACK, DA+R ACK, full multi-byte response: all six PID bytes); plus the Avalon register surface
 (PID/BCR/DCR identity, GETCAPS `0x0200`, CTRL R/W, DYN_ADDR, TX-FIFO push/level,
 `flush_tx`).
 
-## Bugs found by simulation and fixed (7) + 1 tracked
+## Bugs found by simulation and fixed (8)
 
 Simulation found **8 integration bugs the per-module formal proofs could not** — formal
 uses idealized one-cycle edge strobes, so only real oversampled bus timing exposes
-release-tail, byte-framing, and read-termination effects. **7 are fixed and re-verified**
-(full formal suite still ALL GREEN, Quartus build still clean); **1 is tracked open**.
+release-tail, byte-framing, and read-termination effects. **all 8 are fixed and re-verified**
+(full formal suite still ALL GREEN, Quartus build still clean).
 Full write-ups in `docs/findings.md`.
 
 | # | Bug | Fix (RTL signal / module) | State |
@@ -51,7 +51,7 @@ Full write-ups in `docs/findings.md`.
 | 5 | **FINDING-SIM-4** — private-read first byte shifted 1 bit (bit engine shifted on the first `scl_falling` in S_READ before the controller read the MSb) | **`tx_first`** flag in `i3c_bit_engine` holds the loaded MSb across its first `scl_falling` | ✅ fixed |
 | 6 | **FINDING-SIM-5** — a private read never terminated (target kept driving S_READ after the last `T=0` byte, so the controller could not form a STOP) | **`read_done_q`** in `i3c_protocol_fsm` releases `tx_drive_en` after the final T-bit with no more data | ✅ fixed |
 | 7 | **FINDING-SIM-6** — every directed GET (GETSTATUS/GETPID/…) wrongly NACKed (`is_read` used the *latched* `rnw_q`, stale at the CCC-ACK decision on `byte_done`) | `i3c_protocol_fsm` drives `is_read = ` **live `rnw`** at `S_ADDR && byte_done`, else `rnw_q` | ✅ fixed |
-| 8 | **FINDING-SIM-7** — multi-byte GET responses drive only the first byte (`resp_idx` increments at `byte_done`, so the byte-0 T-bit already sees `resp_idx==1` → ends early) | needs a decoupled response pipeline in `i3c_ccc`/`i3c_protocol_fsm`. Single-byte GETs + ACK / response-start already work | ⚠️ **tracked open** |
+| 8 | **FINDING-SIM-7** — multi-byte GET responses drive only the first byte (2nd+ bytes were shifted because the FSM reloaded at `byte_done`, mid-byte) | reload at `ninth_fell` (same phase as the first byte) + `i3c_ccc` resp_idx/look-ahead at the data-phase boundary | ✅ **fixed** |
 
 ## Per-module proof status
 
@@ -84,12 +84,12 @@ Legend: ✅ pass · ⚠️ bounded/partial · – n/a · lint = parses, not SVA-
    task and strips every per-module `$check` so its results never rely on unit assumes.
    **Per-module properties *are* unbounded (k-induction).** Top hardening task: add the
    invariants that make the cross-cutting top properties inductive.
-2. **FINDING-SIM-7 (open) — multi-byte GET responses drive only the first byte.**
-   `resp_idx` in `i3c_ccc` advances at `byte_done`, so the byte-0 T-bit already sees
-   `resp_idx==1` and ends the response early. Single-byte GETs (e.g. GETSTATUS as run in
-   sim), the directed-GET ACK, and response-start all work; a decoupled response pipeline
-   is needed for ≥2-byte GETs (GETPID, GETBCR/GETDCR chains, GETMWL/GETMRL). Tracked in
-   `docs/findings.md`.
+2. **FINDING-SIM-7 (FIXED) — multi-byte GET responses.** Previously the 2nd+ response
+   bytes were shifted/dropped because the FSM reloaded at `byte_done` (mid-byte). The
+   reload now happens at `ninth_fell` (the same bit-phase as the first byte's load) and
+   `i3c_ccc` advances `resp_idx` / applies a 1-ahead look-ahead at the data-phase byte
+   boundary. Verified by a GETPID read (all six PID bytes) in sim (29/29) and the re-run
+   `i3c_ccc` / `i3c_protocol_fsm` proofs. See `docs/findings.md`.
 3. **Deferred / owned-elsewhere properties** (documented, not yet asserted): deep read
    T-bit + MRL-bound end-to-end (T2/T3/T6 across framer+FSM+integration); TE6 read-back
    (optional, needs line read-back); IBI PRN + MDB-format legality (I10/I11); private-read
@@ -113,7 +113,7 @@ Legend: ✅ pass · ⚠️ bounded/partial · – n/a · lint = parses, not SVA-
 ## Next steps (priority order)
 
 1. Strengthen integration F-1/F-2/F-3 to unbounded k-induction (auxiliary invariants).
-2. Close **FINDING-SIM-7** (decoupled multi-byte GET response pipeline) + re-verify all three ways.
+2. ~~Close FINDING-SIM-7~~ DONE (multi-byte GET reload at ninth_fell + resp look-ahead; verified by the GETPID sim test + re-run proofs).
 3. Close the deferred end-to-end properties (gap 3), esp. read-data/T-bit + MRL bound.
 4. Automate the assume-ledger check (gap 4); freeze the product decisions (gap 6).
 5. Board bring-up: pin assignments + ALTIOBUF SDA pad + program-file generation (gap 5).

@@ -113,6 +113,14 @@ module i3c_ccc #(
   wire data_done = byte_done && (phase == PH_DATA);
   wire hdr_open  = addr_done && match_7e;
 
+  // Falling edge of a DATA-phase ninth slot = a GET RESPONSE byte's T-bit just ended.
+  // This is the read-byte boundary where the FSM loads the next response byte
+  // (FINDING-SIM-7). Gated to PH_DATA so the directed-address ACK's ninth slot (the
+  // first-byte load point, S_ACK->S_READ) does NOT advance resp_idx / the look-ahead.
+  logic ninth_data_q;
+  always_ff @(posedge clk) ninth_data_q <= rst_n && ninth_slot && (phase == PH_DATA);
+  wire  ninth_fell_c = ninth_data_q && !ninth_slot;
+
   // ---- code-class helpers ---------------------------------------------------
   function automatic logic is_db_code(input logic [7:0] c);
     // codes carrying a Defining Byte right after the command code
@@ -185,15 +193,23 @@ module i3c_ccc #(
       // Sr: keep code / sticky DB / entdaa across segments (CCC-DEFB-STICKY-01)
       seg_kind <= SK_NONE; dcnt <= 3'd0; in_read_seg <= 1'b0;
     end else begin
+      // resp_idx advances after each completed read byte (its T/ACK bit, ninth_fell),
+      // so at the load point (ninth_fell) it still names the byte just sent and the
+      // FSM/resp_sel look-ahead picks the NEXT byte (FINDING-SIM-7). Reset on a new
+      // segment's address byte.
+      if (addr_done)                          resp_idx <= 3'd0;
+      else if (ninth_fell_c && in_read_seg &&
+               (resp_idx != 3'd7))            resp_idx <= resp_idx + 3'd1;
+
       if (addr_done) begin
-        dcnt <= 3'd0; in_read_seg <= 1'b0; resp_idx <= 3'd0;
+        dcnt <= 3'd0; in_read_seg <= 1'b0;
         if (match_7e) begin
           seg_kind <= SK_HDR; code_valid <= 1'b0; def_byte_valid <= 1'b0;
         end else if (match_da) begin
           seg_kind <= SK_DIR;
           if (code_valid && code_q[7] && is_get_code && is_read &&
               supported_direct(code_q, def_byte_valid, def_byte_q)) begin
-            in_read_seg <= 1'b1; resp_idx <= 3'd0;
+            in_read_seg <= 1'b1;
           end
         end else begin
           seg_kind <= SK_OTHER;
@@ -206,7 +222,6 @@ module i3c_ccc #(
         end
         if (db_capture) begin def_byte_q <= rx_byte; def_byte_valid <= 1'b1; end
         if (value_stb && (is_setmwl || is_setmrl) && (vidx==3'd0)) op0 <= rx_byte;
-        if (in_read_seg) resp_idx <= (resp_idx==3'd7) ? resp_idx : (resp_idx + 3'd1);
       end
     end
   end
@@ -277,13 +292,21 @@ module i3c_ccc #(
                      setnewda_load || setdasa_load || setaasa_load;
 
   // ---- GET* response serializer (FIFO-bypassed) -----------------------------
+  // FINDING-SIM-7 fix: the FSM loads the NEXT response byte on byte_done, but resp_idx
+  // (registered) only advances on the next cycle -- so a load at byte_done would sample
+  // the stale (current) byte. Select the response byte with a 1-ahead index on the
+  // load cycle (data_done while in a read segment) so the value being captured is the
+  // next byte. Termination (ccc_resp_last) stays on resp_idx: it answers "is the byte
+  // just finished the last one?".
+  wire [2:0] resp_sel = (ninth_fell_c && in_read_seg && (resp_idx != 3'd7)) ?
+                        (resp_idx + 3'd1) : resp_idx;
   assign ccc_resp_valid = in_read_seg;
   always_comb begin
     ccc_resp_byte = 8'h00;
     ccc_resp_last = 1'b0;
     case (code_q)
       CCC_GETPID_D: begin
-        case (resp_idx)
+        case (resp_sel)
           3'd0: ccc_resp_byte = pid[47:40];
           3'd1: ccc_resp_byte = pid[39:32];
           3'd2: ccc_resp_byte = pid[31:24];
@@ -296,11 +319,11 @@ module i3c_ccc #(
       CCC_GETBCR_D: begin ccc_resp_byte = bcr; ccc_resp_last = 1'b1; end
       CCC_GETDCR_D: begin ccc_resp_byte = dcr; ccc_resp_last = 1'b1; end
       CCC_GETMWL_D: begin
-        ccc_resp_byte = (resp_idx==3'd0) ? mwl[15:8] : mwl[7:0];
+        ccc_resp_byte = (resp_sel==3'd0) ? mwl[15:8] : mwl[7:0];
         ccc_resp_last = (resp_idx >= 3'd1);
       end
       CCC_GETMRL_D: begin
-        case (resp_idx)
+        case (resp_sel)
           3'd0:    ccc_resp_byte = mrl[15:8];
           3'd1:    ccc_resp_byte = mrl[7:0];
           default: ccc_resp_byte = max_ibi_payload;
@@ -308,11 +331,11 @@ module i3c_ccc #(
         ccc_resp_last = bcr[2] ? (resp_idx >= 3'd2) : (resp_idx >= 3'd1);
       end
       CCC_GETSTATUS_D: begin
-        ccc_resp_byte = (resp_idx==3'd0) ? getstatus_word[15:8] : getstatus_word[7:0];
+        ccc_resp_byte = (resp_sel==3'd0) ? getstatus_word[15:8] : getstatus_word[7:0];
         ccc_resp_last = (resp_idx >= 3'd1);
       end
       CCC_GETCAPS_D: begin
-        case (resp_idx)
+        case (resp_sel)
           3'd0:    ccc_resp_byte = getcaps[7:0];     // GETCAP1
           3'd1:    ccc_resp_byte = getcaps[15:8];    // GETCAP2
           3'd2:    ccc_resp_byte = getcaps[23:16];   // GETCAP3
@@ -406,8 +429,10 @@ module i3c_ccc #(
   end
 
   // ---- C12 : GETCAPS >=2 bytes + constant fields -----------------------------
+  // Checked in the steady response cycle (not the 1-cycle load transition, where the
+  // FINDING-SIM-7 look-ahead mux deliberately presents the NEXT byte for capture).
   always_ff @(posedge clk) if (rst_n) begin
-    if (in_read_seg && (code_q==CCC_GETCAPS_D)) begin
+    if (in_read_seg && (code_q==CCC_GETCAPS_D) && !ninth_fell_c) begin
       c12_len : assert ((resp_idx != 3'd0) || !ccc_resp_last);           // >=2 bytes
       c12_b1  : assert ((resp_idx != 3'd0) || (ccc_resp_byte == GETCAP1_CONST));
       c12_b2  : assert ((resp_idx != 3'd1) ||

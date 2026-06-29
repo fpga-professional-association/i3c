@@ -1,0 +1,18 @@
+# mcy mutation-coverage results (raw kill rate; BMC depth-20 per-mutant test)
+# Run: formal/mcy/gen.sh <module> <N> <files...>; then (cd <module>; mcy init; mcy run -j8; mcy status)
+# RAW kill rate is a LOWER BOUND — deflated by no-change/equivalent mutations
+# (mcy's `mutate -mode none` baseline is itself tagged UNCOVERED), BMC depth bound,
+# and mutations in formal-only ghost logic. See docs/coverage.md §3.
+#
+# module              raw kill rate   sample
+i3c_bit_engine        73%             55 mutants   (clean)
+i3c_framer            50%             small sample
+i3c_regfile           49%             55 mutants   (clean)
+i3c_sda_mux           47%             51 mutants   (clean)
+i3c_daa               ~35%            54 mutants
+i3c_ccc               ~32%            80 mutants   (full)
+#
+# Interpretation: a safety/protocol property set (correctly) does NOT pin every
+# functional bit, so moderate raw kill rate is expected; modules whose properties
+# track the datapath score higher (bit_engine 73%) than big decoders (ccc/daa ~32%).
+# Surviving mutants = a to-do list of functional assertions to add for higher coverage.
